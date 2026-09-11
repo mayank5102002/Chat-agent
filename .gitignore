@@ -1,0 +1,16 @@
+# Python bytecode and virtual environments
+__pycache__/
+venv/
+env/
+*.py[cod]
+
+# Environment variables and API keys (CRITICAL)
+.env
+
+# Local database or persistent chat/memory state files
+chat_history.json
+long_term_memory.txt
+
+# OS-specific files
+Thumbs.db
+.DS_Store

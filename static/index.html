@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Chat</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f172a; color: #f8fafc; display: flex; justify-content: center; height: 100vh; padding: 20px; }
+    .chat-container { width: 100%; max-width: 700px; display: flex; flex-direction: column; background: #1e293b; border-radius: 12px; overflow: hidden; border: 1px solid #334155; }
+    
+    /* Updated header for the reset button */
+    .chat-header { padding: 16px; background: #0f172a; font-weight: 600; border-bottom: 1px solid #334155; display: flex; justify-content: space-between; align-items: center; }
+    .reset-btn { background: #ef4444; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: background 0.2s; }
+    .reset-btn:hover { background: #dc2626; }
+
+    .chat-messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .message { max-width: 80%; padding: 10px 14px; border-radius: 8px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; }
+    .user-msg { align-self: flex-end; background: #2563eb; color: #fff; }
+    .agent-msg { align-self: flex-start; background: #334155; color: #f8fafc; }
+    
+    .msg-error { border: 1px solid #ef4444 !important; background: #3b1d25 !important; }
+    .error-tag { display: block; font-size: 0.75rem; color: #fca5a5; margin-top: 4px; font-style: italic; }
+
+    .loading-dots { display: inline-flex; align-items: center; gap: 5px; padding: 4px 0; }
+    .loading-dots span { width: 7px; height: 7px; background-color: #94a3b8; border-radius: 50%; animation: pulse 1.4s infinite ease-in-out both; }
+    .loading-dots span:nth-child(1) { animation-delay: -0.32s; }
+    .loading-dots span:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes pulse {
+      0%, 80%, 100% { transform: scale(0.3); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    .chat-input-area { display: flex; padding: 12px; background: #0f172a; border-top: 1px solid #334155; gap: 8px; }
+    input { flex: 1; padding: 10px 14px; border-radius: 6px; border: 1px solid #475569; background: #1e293b; color: #fff; outline: none; }
+    input:focus { border-color: #3b82f6; }
+    button { padding: 10px 18px; border: none; border-radius: 6px; background: #2563eb; color: #fff; font-weight: 600; cursor: pointer; }
+    button:disabled { background: #475569; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="chat-container">
+    <div class="chat-header">
+      <span>AI Companion</span>
+      <button id="resetBtn" class="reset-btn">Wipe Memory</button>
+    </div>
+    <div class="chat-messages" id="messages"></div>
+    <form class="chat-input-area" id="chatForm">
+      <input type="text" id="userInput" placeholder="Type a message..." autocomplete="off" required />
+      <button type="submit" id="sendBtn">Send</button>
+    </form>
+  </div>
+
+  <script>
+    const messagesContainer = document.getElementById("messages");
+    const chatForm = document.getElementById("chatForm");
+    const userInput = document.getElementById("userInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const resetBtn = document.getElementById("resetBtn");
+
+    const sessionId = "session_" + Math.random().toString(36).substring(2, 9);
+
+    function appendMessage(role, text, isError = false) {
+      const msgDiv = document.createElement("div");
+      msgDiv.className = `message ${role === "user" ? "user-msg" : "agent-msg"}${isError ? " msg-error" : ""}`;
+      msgDiv.textContent = text;
+      
+      if (isError) {
+        const errorTag = document.createElement("span");
+        errorTag.className = "error-tag";
+        errorTag.textContent = "⚠ Terminated / No response received";
+        msgDiv.appendChild(errorTag);
+      }
+
+      messagesContainer.appendChild(msgDiv);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      return msgDiv;
+    }
+
+    function createLoadingBubble() {
+      const bubble = document.createElement("div");
+      bubble.className = "message agent-msg";
+      bubble.innerHTML = `<div class="loading-dots"><span></span><span></span><span></span></div>`;
+      messagesContainer.appendChild(bubble);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      return bubble;
+    }
+
+    // Reset Memory Handler
+    resetBtn.addEventListener("click", async () => {
+      if (!confirm("Are you sure you want to delete all chat history and the AI's long-term memory? This cannot be undone.")) return;
+      
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/reset", {
+          method: "DELETE"
+        });
+        
+        if (response.ok) {
+          messagesContainer.innerHTML = "";
+          appendMessage("agent", "Memory wiped. Ready to start fresh.");
+        }
+      } catch (err) {
+        console.error("Failed to reset memory:", err);
+        alert("Failed to reach the server to wipe memory.");
+      }
+    });
+
+    // Load past history on page start
+    window.addEventListener("DOMContentLoaded", async () => {
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/history");
+        if (response.ok) {
+          const history = await response.json();
+          history.forEach(msg => {
+            appendMessage(msg.role, msg.text, Boolean(msg.error));
+          });
+        }
+      } catch (err) {
+        console.error("Failed to load history:", err);
+      }
+    });
+
+    chatForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const message = userInput.value.trim();
+      if (!message) return;
+
+      const userMsgElement = appendMessage("user", message);
+      userInput.value = "";
+      userInput.disabled = true;
+      sendBtn.disabled = true;
+
+      const agentBubble = createLoadingBubble();
+
+      let streamCompleted = false;
+      let firstChunkReceived = false;
+
+      try {
+        const response = await fetch("http://127.0.0.1:8000/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, message: message })
+        });
+
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.replace("data: ", "");
+              if (data === "[DONE]") {
+                streamCompleted = true;
+                return;
+              }
+
+              if (!firstChunkReceived) {
+                agentBubble.innerHTML = "";
+                firstChunkReceived = true;
+              }
+
+              agentBubble.textContent += data;
+              messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Connection failed:", err);
+      } finally {
+        if (!streamCompleted) {
+          userMsgElement.classList.add("msg-error");
+          const errorTag = document.createElement("span");
+          errorTag.className = "error-tag";
+          errorTag.textContent = "⚠ Terminated / No response received";
+          userMsgElement.appendChild(errorTag);
+
+          if (!firstChunkReceived) {
+            agentBubble.remove();
+          }
+        }
+
+        userInput.disabled = false;
+        sendBtn.disabled = false;
+        userInput.focus();
+      }
+    });
+  </script>
+</body>
+</html>
